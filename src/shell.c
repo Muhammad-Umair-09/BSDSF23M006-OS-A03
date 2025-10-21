@@ -26,6 +26,10 @@ char* read_cmd(char* prompt, FILE* fp) {
 /*
  * tokenize()
  * Converts the command string into an array of arguments for execvp().
+ * 
+ * Updated in Feature 5:
+ *  - Detects I/O redirection symbols: <, >, >>
+ *  - Treats them as separate tokens
  */
 char** tokenize(char* cmdline) {
     if (cmdline == NULL || cmdline[0] == '\0' || cmdline[0] == '\n') {
@@ -39,18 +43,32 @@ char** tokenize(char* cmdline) {
     }
 
     char* cp = cmdline;
-    char* start;
-    int len;
     int argnum = 0;
 
     while (*cp != '\0' && argnum < MAXARGS) {
         while (*cp == ' ' || *cp == '\t') cp++; // Skip spaces
-
         if (*cp == '\0') break;
 
-        start = cp;
-        len = 1;
-        while (*++cp != '\0' && !(*cp == ' ' || *cp == '\t')) {
+        // Handle redirection symbols separately
+        if (*cp == '<' || *cp == '>') {
+            if (*cp == '>' && *(cp + 1) == '>') {  // Handle >>
+                strcpy(arglist[argnum++], ">>");
+                cp += 2;
+            } else {                               // Handle < or >
+                arglist[argnum][0] = *cp;
+                arglist[argnum][1] = '\0';
+                argnum++;
+                cp++;
+            }
+            continue;
+        }
+
+        // Regular argument
+        char* start = cp;
+        int len = 0;
+
+        while (*cp != '\0' && *cp != ' ' && *cp != '\t' && *cp != '<' && *cp != '>') {
+            cp++;
             len++;
         }
 
