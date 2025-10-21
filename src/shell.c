@@ -4,81 +4,74 @@
 
 /*
  * read_cmd()
- * Uses GNU Readline instead of manual input.
- * Supports command-line editing, history navigation (↑/↓), and tab completion.
+ * Uses GNU Readline for prompt, history navigation, and tab-completion default behavior.
  */
 char* read_cmd(char* prompt, FILE* fp) {
-    // Read user input using readline()
+    (void)fp; /* not used but kept for compatibility */
+
     char* cmdline = readline(prompt);
+    if (cmdline == NULL) return NULL; /* Ctrl+D */
 
-    // Handle Ctrl+D (EOF)
-    if (cmdline == NULL)
-        return NULL;
-
-    // If command is not empty, add to history
-    if (strlen(cmdline) > 0) {
-        add_history(cmdline);
+    /* add non-empty, non-whitespace commands to history */
+    int only_ws = 1;
+    for (char *p = cmdline; *p; ++p) {
+        if (*p != ' ' && *p != '\t' && *p != '\n') { only_ws = 0; break; }
     }
-
+    if (!only_ws && strlen(cmdline) > 0) add_history(cmdline);
     return cmdline;
 }
 
 /*
  * tokenize()
- * Converts the command string into an array of arguments for execvp().
- * 
- * Updated in Feature 5:
- *  - Detects I/O redirection symbols: <, >, >>
- *  - Treats them as separate tokens
+ * Tokenize one command string (no ';' splitting).
+ * Produces an argv-like array. Caller must free each arg and the array.
+ * Recognizes <, >, >> and & as separate tokens.
  */
 char** tokenize(char* cmdline) {
-    if (cmdline == NULL || cmdline[0] == '\0' || cmdline[0] == '\n') {
-        return NULL;
-    }
+    if (cmdline == NULL) return NULL;
 
-    char** arglist = (char**) malloc(sizeof(char*) * (MAXARGS + 1));
-    for (int i = 0; i < MAXARGS + 1; i++) {
-        arglist[i] = (char*) malloc(sizeof(char) * ARGLEN);
-        bzero(arglist[i], ARGLEN);
+    char** arglist = malloc(sizeof(char*) * (MAXARGS + 1));
+    if (!arglist) return NULL;
+    for (int i = 0; i < MAXARGS + 1; ++i) {
+        arglist[i] = malloc(ARGLEN);
+        if (arglist[i]) memset(arglist[i], 0, ARGLEN);
     }
 
     char* cp = cmdline;
     int argnum = 0;
 
     while (*cp != '\0' && argnum < MAXARGS) {
-        while (*cp == ' ' || *cp == '\t') cp++; // Skip spaces
-        if (*cp == '\0') break;
+        while (*cp == ' ' || *cp == '\t') cp++;
+        if (*cp == '\0' || *cp == '\n') break;
 
-        // Handle redirection symbols separately
-        if (*cp == '<' || *cp == '>') {
-            if (*cp == '>' && *(cp + 1) == '>') {  // Handle >>
-                strcpy(arglist[argnum++], ">>");
-                cp += 2;
-            } else {                               // Handle < or >
-                arglist[argnum][0] = *cp;
-                arglist[argnum][1] = '\0';
-                argnum++;
-                cp++;
-            }
+        if (*cp == '<') {
+            strncpy(arglist[argnum++], "<", ARGLEN-1);
+            cp++;
+            continue;
+        }
+        if (*cp == '>') {
+            if (*(cp+1) == '>') { strncpy(arglist[argnum++], ">>", ARGLEN-1); cp += 2; }
+            else { strncpy(arglist[argnum++], ">", ARGLEN-1); cp++; }
+            continue;
+        }
+        if (*cp == '&') {
+            strncpy(arglist[argnum++], "&", ARGLEN-1);
+            cp++;
             continue;
         }
 
-        // Regular argument
+        /* normal token */
         char* start = cp;
         int len = 0;
-
-        while (*cp != '\0' && *cp != ' ' && *cp != '\t' && *cp != '<' && *cp != '>') {
-            cp++;
-            len++;
-        }
-
+        while (*cp != '\0' && *cp != ' ' && *cp != '\t' && *cp != '<' && *cp != '>' && *cp != '&' && *cp != '\n') { cp++; len++; }
+        if (len >= ARGLEN) len = ARGLEN-1;
         strncpy(arglist[argnum], start, len);
         arglist[argnum][len] = '\0';
         argnum++;
     }
 
     if (argnum == 0) {
-        for (int i = 0; i < MAXARGS + 1; i++) free(arglist[i]);
+        for (int i = 0; i < MAXARGS + 1; ++i) free(arglist[i]);
         free(arglist);
         return NULL;
     }
