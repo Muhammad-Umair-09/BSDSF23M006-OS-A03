@@ -10,6 +10,13 @@
 #include <errno.h>
 #include <limits.h>
 
+
+/* ---- History ---- */
+#define HISTORY_SIZE 20
+extern char *history_buf[HISTORY_SIZE];
+extern int history_count;   /* number of entries currently stored (<= HISTORY_SIZE) */
+extern int history_start;   /* index of the oldest entry in circular buffer */
+
 #define MAX_LEN 512
 #define MAXARGS 10
 #define ARGLEN 30

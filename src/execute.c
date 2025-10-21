@@ -1,4 +1,5 @@
 #include "shell.h"
+#include <limits.h>
 
 int execute(char* arglist[]) {
     if (arglist == NULL || arglist[0] == NULL)
@@ -17,11 +18,11 @@ int execute(char* arglist[]) {
             if (chdir(arglist[1]) != 0)
                 perror("cd failed");
         }
-        return 0;  // no child forked
+        return 0;  // handled internally
     }
 
     if (strcmp(arglist[0], "pwd") == 0) {
-        char cwd[PATH_MAX];
+        char cwd[1024];
         if (getcwd(cwd, sizeof(cwd)) != NULL)
             printf("%s\n", cwd);
         else
@@ -30,9 +31,20 @@ int execute(char* arglist[]) {
     }
 
     if (strcmp(arglist[0], "echo") == 0) {
-        for (int i = 1; arglist[i] != NULL; i++)
-            printf("%s ", arglist[i]);
+        for (int i = 1; arglist[i] != NULL; i++) {
+            printf("%s", arglist[i]);
+            if (arglist[i+1] != NULL) printf(" ");
+        }
         printf("\n");
+        return 0;
+    }
+
+    if (strcmp(arglist[0], "history") == 0) {
+        /* Print stored history in chronological order with numbers 1..N */
+        for (int i = 0; i < history_count; i++) {
+            int idx = (history_start + i) % HISTORY_SIZE;
+            printf("%d  %s\n", i + 1, history_buf[idx]);
+        }
         return 0;
     }
 
@@ -45,12 +57,12 @@ int execute(char* arglist[]) {
             perror("fork failed");
             exit(1);
 
-        case 0: // Child process
+        case 0: /* Child process */
             execvp(arglist[0], arglist);
             perror("Command not found");
             exit(1);
 
-        default: // Parent waits
+        default: /* Parent */
             waitpid(cpid, &status, 0);
             return 0;
     }
