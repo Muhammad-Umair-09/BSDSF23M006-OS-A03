@@ -1,117 +1,128 @@
 #include "shell.h"
-#include <limits.h>
-#include <fcntl.h>      // For open(), O_RDONLY, etc.
-#include <sys/wait.h>   // For waitpid()
-#include <unistd.h>     // For dup2(), close()
+#include <sys/types.h>
+#include <signal.h>
+#include <termios.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-int execute(char* arglist[]) {
+/* Execute a single command, optionally in background.
+ * Return 1 -> tell main to exit the shell (exit builtin),
+ * otherwise 0 to continue.
+ */
+int execute(char* arglist[], int background) {
+    pid_t pid;
+    int status;
+
     if (arglist == NULL || arglist[0] == NULL)
         return 0;
 
-    /* ---------- Built-in Commands ---------- */
-    if (strcmp(arglist[0], "exit") == 0) {
-        printf("Exiting shell...\n");
-        exit(0);
-    }
-
-    if (strcmp(arglist[0], "cd") == 0) {
-        if (arglist[1] == NULL) {
-            fprintf(stderr, "cd: missing argument\n");
-        } else {
-            if (chdir(arglist[1]) != 0)
-                perror("cd failed");
-        }
+    // ---------- Built-in commands ----------
+    if (strcmp(arglist[0], "jobs") == 0) {
+        print_jobs();
         return 0;
     }
 
-    if (strcmp(arglist[0], "pwd") == 0) {
-        char cwd[1024];
-        if (getcwd(cwd, sizeof(cwd)) != NULL)
-            printf("%s\n", cwd);
+    if (strcmp(arglist[0], "fg") == 0) {
+        if (arglist[1])
+            bring_job_to_foreground(atoi(arglist[1]));
         else
-            perror("pwd failed");
+            fprintf(stderr, "Usage: fg <job_id>\n");
         return 0;
     }
 
-    if (strcmp(arglist[0], "echo") == 0) {
-        for (int i = 1; arglist[i] != NULL; i++) {
-            printf("%s", arglist[i]);
-            if (arglist[i + 1] != NULL) printf(" ");
+    if (strcmp(arglist[0], "bg") == 0) {
+        if (arglist[1])
+            continue_job_in_background(atoi(arglist[1]));
+        else
+            fprintf(stderr, "Usage: bg <job_id>\n");
+        return 0;
+    }
+
+    if (strcmp(arglist[0], "exit") == 0) {
+        /* Signal main loop to terminate */
+        return 1;
+    }
+
+    // ---------- External commands ----------
+    pid = fork();
+    if (pid < 0) {
+        perror("fork failed");
+        return 0;
+    }
+
+    if (pid == 0) {
+        // ---- Child process ----
+
+        /* Put child into new process group (group leader = child pid) */
+        if (setpgid(0, 0) < 0) {
+            /* Not fatal, but warn */
+            perror("setpgid (child)");
         }
-        printf("\n");
-        return 0;
-    }
 
-    if (strcmp(arglist[0], "history") == 0) {
-        for (int i = 0; i < history_count; i++) {
-            int idx = (history_start + i) % HISTORY_SIZE;
-            printf("%d  %s\n", i + 1, history_buf[idx]);
+        /* If foreground, give terminal to child's process group */
+        if (!background) {
+            if (tcsetpgrp(STDIN_FILENO, getpid()) < 0) {
+                /* It can fail in some environments; warn but continue */
+                // perror("tcsetpgrp (child)");
+            }
         }
-        return 0;
-    }
 
-    /* ---------- External Commands ---------- */
-    pid_t cpid = fork();
-    int status;
+        /* restore default signals for child */
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
 
-    switch (cpid) {
-        case -1:
-            perror("fork failed");
-            exit(1);
+        /* execute the requested program */
+        execvp(arglist[0], arglist);
+        /* only reach here on failure */
+        fprintf(stderr, "myshell: command not found: %s\n", arglist[0]);
+        exit(EXIT_FAILURE);
+    } else {
+        // ---- Parent process ----
 
-        case 0: { /* Child process */
+        /* Ensure child is in its own group (do it in parent too to avoid race) */
+        if (setpgid(pid, pid) < 0 && errno != EACCES) {
+            /* sometimes EACCES can be returned if child already set pgid */
+            // perror("setpgid (parent)");
+        }
 
-            int fd_in = -1, fd_out = -1;
-            char* new_argv[MAXARGS + 1];
-            int j = 0;
-
-            // Scan for I/O redirection operators
-            for (int i = 0; arglist[i] != NULL; i++) {
-                if (strcmp(arglist[i], "<") == 0 && arglist[i + 1] != NULL) {
-                    fd_in = open(arglist[i + 1], O_RDONLY);
-                    if (fd_in < 0) {
-                        perror("input redirection failed");
-                        exit(1);
-                    }
-                    dup2(fd_in, STDIN_FILENO);
-                    close(fd_in);
-                    i++; // skip filename
-                }
-                else if (strcmp(arglist[i], ">") == 0 && arglist[i + 1] != NULL) {
-                    fd_out = open(arglist[i + 1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                    if (fd_out < 0) {
-                        perror("output redirection failed");
-                        exit(1);
-                    }
-                    dup2(fd_out, STDOUT_FILENO);
-                    close(fd_out);
-                    i++; // skip filename
-                }
-                else if (strcmp(arglist[i], ">>") == 0 && arglist[i + 1] != NULL) {
-                    fd_out = open(arglist[i + 1], O_WRONLY | O_CREAT | O_APPEND, 0644);
-                    if (fd_out < 0) {
-                        perror("append redirection failed");
-                        exit(1);
-                    }
-                    dup2(fd_out, STDOUT_FILENO);
-                    close(fd_out);
-                    i++; // skip filename
-                }
-                else {
-                    // Regular command argument
-                    new_argv[j++] = arglist[i];
-                }
+        if (background) {
+            add_job(pid, arglist[0], 1);
+            printf("[BG] Started job %d with PID %d: %s\n", job_count, (int)pid, arglist[0]);
+            /* parent returns to prompt immediately */
+        } else {
+            /* Foreground: give terminal control to child's process group */
+            if (tcsetpgrp(STDIN_FILENO, pid) < 0) {
+                // perror("tcsetpgrp (parent)");
             }
 
-            new_argv[j] = NULL;
+            /* Wait for the foreground child; handle stopped children */
+            pid_t w;
+            do {
+                w = waitpid(pid, &status, WUNTRACED);
+            } while (w == -1 && errno == EINTR);
 
-            execvp(new_argv[0], new_argv);
-            perror("Command not found");
-            exit(1);
+            /* Return terminal control to shell (our process group) */
+            if (tcsetpgrp(STDIN_FILENO, getpgrp()) < 0) {
+                // perror("tcsetpgrp (restore shell)");
+            }
+
+            if (w == -1) {
+                perror("waitpid");
+            } else {
+                if (WIFSTOPPED(status)) {
+                    /* Child was stopped (Ctrl+Z) - add to jobs list as stopped */
+                    add_job(pid, arglist[0], 0);
+                    update_job_status(pid, "Stopped");
+                    printf("[STOPPED] Job %d stopped: %s (pid %d)\n", job_count, arglist[0], (int)pid);
+                } else if (WIFEXITED(status) || WIFSIGNALED(status)) {
+                    /* Finished normally or terminated by signal - ensure job removed */
+                    remove_job(pid); /* remove if present */
+                }
+            }
         }
-
-        default: /* Parent process */
-            waitpid(cpid, &status, 0);
-            return 0;
     }
+
+    return 0; /* Continue main loop */
 }

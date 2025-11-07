@@ -1,88 +1,105 @@
 #include "shell.h"
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <strings.h> // bzero
+#include <ctype.h>
 
 /*
  * read_cmd()
  * Uses GNU Readline instead of manual input.
  * Supports command-line editing, history navigation (↑/↓), and tab completion.
+ * Caller must free() the returned string.
  */
 char* read_cmd(char* prompt, FILE* fp) {
-    // Read user input using readline()
+    (void)fp; // unused
+
     char* cmdline = readline(prompt);
 
-    // Handle Ctrl+D (EOF)
+    /* Handle Ctrl+D (EOF) */
     if (cmdline == NULL)
         return NULL;
 
-    // If command is not empty, add to history
+    /* If command is not empty, add to readline history (readline internal) */
     if (strlen(cmdline) > 0) {
         add_history(cmdline);
     }
 
-    return cmdline;
+    return cmdline; /* caller must free() this string (readline allocates heap memory) */
 }
 
 /*
  * tokenize()
- * Converts the command string into an array of arguments for execvp().
- * 
- * Updated in Feature 5:
- *  - Detects I/O redirection symbols: <, >, >>
- *  - Treats them as separate tokens
+ * Converts the command string into a dynamically allocated array of argument
+ * strings for execvp(). Caller must free each element and the array itself.
+ *
+ * This tokenizer treats '<', '>', '>>', and '&' as separate tokens and splits on
+ * whitespace. It does not implement full shell quoting/escaping — keep it simple
+ * but safe for the assignment scope.
  */
 char** tokenize(char* cmdline) {
-    if (cmdline == NULL || cmdline[0] == '\0' || cmdline[0] == '\n') {
-        return NULL;
-    }
+    if (cmdline == NULL) return NULL;
 
-    char** arglist = (char**) malloc(sizeof(char*) * (MAXARGS + 1));
-    for (int i = 0; i < MAXARGS + 1; i++) {
-        arglist[i] = (char*) malloc(sizeof(char) * ARGLEN);
-        bzero(arglist[i], ARGLEN);
-    }
+    /* Skip leading whitespace */
+    char* p = cmdline;
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (*p == '\0') return NULL;
 
-    char* cp = cmdline;
+    int capacity = 16;
+    char** arglist = malloc(sizeof(char*) * capacity);
+    if (!arglist) return NULL;
     int argnum = 0;
 
-    while (*cp != '\0' && argnum < MAXARGS) {
-        while (*cp == ' ' || *cp == '\t') cp++; // Skip spaces
-        if (*cp == '\0') break;
+    while (*p != '\0') {
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (*p == '\0' || *p == '\n') break;
 
-        // Handle redirection symbols separately
-        if (*cp == '<' || *cp == '>') {
-            if (*cp == '>' && *(cp + 1) == '>') {  // Handle >>
-                strcpy(arglist[argnum++], ">>");
-                cp += 2;
-            } else {                               // Handle < or >
-                arglist[argnum][0] = *cp;
-                arglist[argnum][1] = '\0';
-                argnum++;
-                cp++;
+        /* Handle special tokens */
+        if (*p == '<' || *p == '>' || *p == '&' || *p == ';' || *p == '|') {
+            char tok[3] = {0};
+            if (*p == '>' && *(p + 1) == '>') {
+                tok[0] = '>'; tok[1] = '>';
+                p += 2;
+            } else {
+                tok[0] = *p;
+                p++;
             }
+            /* push token */
+            if (argnum + 1 >= capacity) {
+                capacity *= 2;
+                arglist = realloc(arglist, sizeof(char*) * capacity);
+            }
+            arglist[argnum] = strdup(tok);
+            if (!arglist[argnum]) break;
+            argnum++;
             continue;
         }
 
-        // Regular argument
-        char* start = cp;
+        /* Regular argument */
+        char buffer[ARGLEN];
         int len = 0;
-
-        while (*cp != '\0' && *cp != ' ' && *cp != '\t' && *cp != '<' && *cp != '>') {
-            cp++;
-            len++;
+        while (*p && !isspace((unsigned char)*p) && *p != '<' && *p != '>' && *p != '&' && *p != '|' && *p != ';' && *p != '\n') {
+            if (len < ARGLEN - 1) buffer[len++] = *p;
+            p++;
         }
-
-        strncpy(arglist[argnum], start, len);
-        arglist[argnum][len] = '\0';
-        argnum++;
+        buffer[len] = '\0';
+        if (len > 0) {
+            if (argnum + 1 >= capacity) {
+                capacity *= 2;
+                arglist = realloc(arglist, sizeof(char*) * capacity);
+            }
+            arglist[argnum] = strdup(buffer);
+            if (!arglist[argnum]) break;
+            argnum++;
+        }
     }
 
     if (argnum == 0) {
-        for (int i = 0; i < MAXARGS + 1; i++) free(arglist[i]);
         free(arglist);
         return NULL;
     }
 
+    /* NULL-terminate */
     arglist[argnum] = NULL;
+
     return arglist;
 }

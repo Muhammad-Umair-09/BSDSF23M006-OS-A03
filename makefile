@@ -7,12 +7,13 @@ BIN_DIR     := bin
 # --------- Compiler Settings -----------
 CC      := gcc
 CFLAGS  := -Wall -Wextra -I$(INCLUDE_DIR)
-LDFLAGS := -lreadline -lhistory
+# Link readline; ncurses sometimes required on some systems
+LDFLAGS := -lreadline -lncurses
 TARGET  := $(BIN_DIR)/myshell
 
 # --------- Source and Object Files -----
-SRCS := $(SRC_DIR)/main.c $(SRC_DIR)/shell.c $(SRC_DIR)/execute.c
-OBJS := $(OBJ_DIR)/main.o $(OBJ_DIR)/shell.o $(OBJ_DIR)/execute.o
+SRCS := $(SRC_DIR)/main.c $(SRC_DIR)/shell.c $(SRC_DIR)/execute.c $(SRC_DIR)/jobs.c
+OBJS := $(OBJ_DIR)/main.o $(OBJ_DIR)/shell.o $(OBJ_DIR)/execute.o $(OBJ_DIR)/jobs.o
 
 # =========================================================
 # Default target — build the shell
