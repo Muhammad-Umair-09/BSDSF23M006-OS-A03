@@ -60,7 +60,7 @@ void remove_job(pid_t pid) {
 
 /* Update a job's status by pid */
 void update_job_status(pid_t pid, const char* status) {
-    if (!status) return;  // prevent invalid pointer crash
+    if (!status) return;
     int idx = job_index_by_pid(pid);
     if (idx == -1) return;
     strncpy(jobs[idx].status, status, sizeof(jobs[idx].status) - 1);
@@ -84,30 +84,18 @@ int bring_job_to_foreground(int job_id) {
     for (int i = 0; i < job_count; ++i) {
         if (jobs[i].job_id == job_id) {
             pid_t pid = jobs[i].pid;
-
-            /* Give terminal to job's process group */
-            if (tcsetpgrp(STDIN_FILENO, pid) < 0) {
-                // perror("tcsetpgrp (fg)");
-            }
-
-            /* Continue job if it was stopped */
-            if (kill(-pid, SIGCONT) < 0 && errno != ESRCH)
-                perror("kill(SIGCONT)");
+            if (tcsetpgrp(STDIN_FILENO, pid) < 0) {}
+            if (kill(-pid, SIGCONT) < 0 && errno != ESRCH) perror("kill(SIGCONT)");
 
             int status;
-            if (waitpid(pid, &status, WUNTRACED) == -1)
-                perror("waitpid");
+            if (waitpid(pid, &status, WUNTRACED) == -1) perror("waitpid");
 
-            /* Restore terminal to shell */
-            if (tcsetpgrp(STDIN_FILENO, getpgrp()) < 0) {
-                // perror("tcsetpgrp (restore)");
-            }
+            if (tcsetpgrp(STDIN_FILENO, getpgrp()) < 0) {}
 
             if (WIFSTOPPED(status)) {
                 strncpy(jobs[i].status, "Stopped", sizeof(jobs[i].status) - 1);
                 jobs[i].status[sizeof(jobs[i].status) - 1] = '\0';
             } else {
-                /* finished - remove job */
                 remove_job(pid);
             }
 
@@ -123,13 +111,9 @@ int continue_job_in_background(int job_id) {
     for (int i = 0; i < job_count; ++i) {
         if (jobs[i].job_id == job_id) {
             pid_t pid = jobs[i].pid;
-
-            if (kill(-pid, SIGCONT) < 0 && errno != ESRCH)
-                perror("kill(SIGCONT)");
-
+            if (kill(-pid, SIGCONT) < 0 && errno != ESRCH) perror("kill(SIGCONT)");
             strncpy(jobs[i].status, "Running", sizeof(jobs[i].status) - 1);
             jobs[i].status[sizeof(jobs[i].status) - 1] = '\0';
-
             printf("[%d] %d resumed in background\n", jobs[i].job_id, (int)pid);
             return 0;
         }
@@ -138,23 +122,19 @@ int continue_job_in_background(int job_id) {
     return -1;
 }
 
-/* SIGCHLD handler: reap children and update job statuses */
+/* SIGCHLD handler */
 void handle_sigchld(int sig) {
     (void)sig;
     int saved_errno = errno;
     pid_t pid;
     int status;
 
-    /* Reap all children that have changed state */
     while ((pid = waitpid(-1, &status, WNOHANG | WUNTRACED | WCONTINUED)) > 0) {
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
-            /* process finished */
             update_job_status(pid, "Done");
-            /* remove completed jobs from job table */
             remove_job(pid);
         } else if (WIFSTOPPED(status)) {
             update_job_status(pid, "Stopped");
-            /* ensure it's present in job table; if not, add it */
             if (!job_exists(pid)) {
                 add_job(pid, "stopped_job", 0);
                 update_job_status(pid, "Stopped");
@@ -167,8 +147,6 @@ void handle_sigchld(int sig) {
     errno = saved_errno;
 }
 
-/* Shell ignores SIGTSTP itself; placeholder if needed */
 void handle_sigtstp(int sig) {
     (void)sig;
-    /* intentionally empty: shell ignores SIGTSTP */
 }

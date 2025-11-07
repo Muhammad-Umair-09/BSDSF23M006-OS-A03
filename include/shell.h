@@ -1,7 +1,6 @@
 #ifndef SHELL_H
 #define SHELL_H
 
-/* Standard headers */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -15,8 +14,8 @@
 /* ---------------- History ---------------- */
 #define HISTORY_SIZE 20
 extern char *history_buf[HISTORY_SIZE];
-extern int history_count;   /* number of entries currently stored (<= HISTORY_SIZE) */
-extern int history_start;   /* index of the oldest entry in circular buffer */
+extern int history_count;
+extern int history_start;
 
 /* ---------------- Core constants ---------------- */
 #define MAX_LEN   512
@@ -26,11 +25,11 @@ extern int history_start;   /* index of the oldest entry in circular buffer */
 
 /* ---------------- Job control ---------------- */
 typedef struct {
-    pid_t pid;                 /* process id (leader of process group) */
-    int   job_id;              /* 1-based job id shown to user */
-    char  cmdline[MAX_LEN];    /* textual command line */
-    char  status[16];          /* "Running", "Stopped", "Done" */
-    int   background;          /* 1 if launched in background, 0 if foreground */
+    pid_t pid;
+    int   job_id;
+    char  cmdline[MAX_LEN];
+    char  status[16];
+    int   background;
 } job_t;
 
 #define MAX_JOBS 64
@@ -41,7 +40,8 @@ extern int job_count;
 
 /* Input / parsing */
 char*  read_cmd(char* prompt, FILE* fp);
-char** tokenize(char* cmdline);
+char** tokenize(const char* cmdline);
+
 
 /* Execution */
 int    execute(char* arglist[], int background);
@@ -55,8 +55,14 @@ int    continue_job_in_background(int job_id);
 void   remove_job(pid_t pid);
 int    job_exists(pid_t pid);
 
-/* Signal handlers (to be registered in main) */
+/* Signal handlers */
 void   handle_sigchld(int sig);
 void   handle_sigtstp(int sig);
 
-#endif /* SHELL_H */
+/* Variables (Feature 8) */
+void   set_variable(const char* name, const char* value);
+const char* get_variable(const char* name);
+void   print_variables(void);
+void   free_variables(void);
+
+#endif
