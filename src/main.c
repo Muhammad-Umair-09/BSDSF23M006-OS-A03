@@ -2,7 +2,7 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-/* ---- History storage (defined here) ---- */
+
 char *history_buf[HISTORY_SIZE] = {0};
 int history_count = 0;   /* current number of entries stored (<= HISTORY_SIZE) */
 int history_start = 0;   /* index of oldest entry */
